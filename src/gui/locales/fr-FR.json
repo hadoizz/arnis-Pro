@@ -12,7 +12,7 @@
   "floodfill_timeout": "Expiration du délai de remplissage (en secondes)",
   "ground_level": "Niveau du sol",
   "customization_settings": "Paramètres de personnalisation",
-  "footer_text": "© {year} Arnis v{version} par louis-e",
+  "footer_text": "© {year} Arnis v{version} par louis-e · Improved by Hadoiz",
   "new_version_available": "Une nouvelle version est disponible ! Cliquez ici pour la télécharger.",
   "minecraft_directory_not_found": "Répertoire Minecraft introuvable",
   "world_in_use": "Le monde sélectionné est en cours d'utilisation",
@@ -40,7 +40,7 @@
   "interior": "Génération d'intérieur",
   "roof": "Génération de toit",
   "fillground": "Remplir le sol",
-  "land_cover": "Couverture du sol",
+  "city_boundaries": "Sol urbain",
   "bedrock_auto_generated": "Le monde Bedrock est généré automatiquement",
   "save_path": "Chemin de sauvegarde"
 }

@@ -36,6 +36,9 @@ window.addEventListener("DOMContentLoaded", async () => {
   registerMessageEvent();
   window.createWorld = createWorld;
   window.startGeneration = startGeneration;
+  window.closeWorldPreviewModal = closeWorldPreviewModal;
+  window.openWorldPreview = openWorldPreview;
+  initWorldPreviewModal();
   setupProgressListener();
   await initSavePath();
   initSettings();
@@ -98,8 +101,10 @@ async function localizeElement(json, elementObject, localizedStringKey) {
 async function applyLocalization(localization) {
   const localizationElements = {
     "span[id='choose_world']": "create_world",
+    "span[id='import_world']": "import_world",
     "#selected-world": "no_world_selected",
     "#start-button": "start_generation",
+    "#preview-button": "world_preview_open_btn",
     "h2[data-localize='customization_settings']": "customization_settings",
     "span[data-localize='world_scale']": "world_scale",
     "span[data-localize='custom_bounding_box']": "custom_bounding_box",
@@ -114,12 +119,17 @@ async function applyLocalization(localization) {
     "span[data-localize='interior']": "interior",
     "span[data-localize='roof']": "roof",
     "span[data-localize='fillground']": "fillground",
-    "span[data-localize='land_cover']": "land_cover",
+    "span[data-localize='city_boundaries']": "city_boundaries",
     "span[data-localize='map_theme']": "map_theme",
     "span[data-localize='save_path']": "save_path",
-    ".footer-link": "footer_text",
+    ".footer-credits": "footer_text",
     "button[data-localize='license_and_credits']": "license_and_credits",
     "h2[data-localize='license_and_credits']": "license_and_credits",
+    "#world-preview-title": "world_preview_title",
+    "#world-preview-hint": "world_preview_hint",
+    "#world-preview-tab-2d": "world_preview_tab_2d",
+    "#world-preview-tab-3d": "world_preview_tab_3d",
+    "#world-preview-close-btn": "world_preview_close",
 
     // Placeholder strings
     "input[id='bbox-coords']": "placeholder_bbox",
@@ -153,7 +163,7 @@ async function initFooter() {
     console.error("Failed to fetch version:", error);
   }
 
-  const footerElement = document.querySelector(".footer-link");
+  const footerElement = document.querySelector(".footer-credits");
   if (footerElement) {
     // Get the original text from localization if available, or use the current text
     let footerText = footerElement.textContent;
@@ -281,6 +291,11 @@ function initSettings() {
       const licenseModal = document.getElementById("license-modal");
       if (licenseModal && licenseModal.style.display === "flex") {
         closeLicense();
+      }
+
+      const worldPreviewModal = document.getElementById("world-preview-modal");
+      if (worldPreviewModal && worldPreviewModal.style.display === "flex") {
+        closeWorldPreviewModal();
       }
     }
   });
@@ -452,6 +467,7 @@ function updateFormatToggleUI(format) {
       selectedWorldText.textContent = noWorldText;
       selectedWorldText.style.color = '#fecc44';
     }
+    updatePreviewButtonEnabled();
   } else {
     javaBtn.classList.remove('format-active');
     bedrockBtn.classList.add('format-active');
@@ -468,6 +484,7 @@ function updateFormatToggleUI(format) {
       selectedWorldText.textContent = bedrockText;
       selectedWorldText.style.color = '#fecc44';
     }
+    updatePreviewButtonEnabled();
   }
 }
 
@@ -805,6 +822,7 @@ async function createWorld() {
 
       // Notify that world changed (reset preview)
       notifyWorldChanged();
+      updatePreviewButtonEnabled();
     }
   } catch (error) {
     handleWorldSelectionError(error);
@@ -880,7 +898,7 @@ async function startGeneration() {
     var interior = document.getElementById("interior-toggle").checked;
     var roof = document.getElementById("roof-toggle").checked;
     var fill_ground = document.getElementById("fillground-toggle").checked;
-    var land_cover = document.getElementById("land-cover-toggle").checked;
+    var city_boundaries = document.getElementById("city-boundaries-toggle").checked;
     var scale = parseFloat(document.getElementById("scale-value-slider").value);
     // var ground_level = parseInt(document.getElementById("ground-level").value, 10);
     // DEPRECATED: Ground level input removed from UI
@@ -903,7 +921,7 @@ async function startGeneration() {
         interiorEnabled: interior,
         roofEnabled: roof,
         fillgroundEnabled: fill_ground,
-        landCoverEnabled: land_cover,
+        cityBoundariesEnabled: city_boundaries,
         isNewWorld: true,
         spawnPoint: spawnPoint,
         telemetryConsent: telemetryConsent || false,
@@ -921,17 +939,167 @@ async function startGeneration() {
 // World preview overlay state
 let worldPreviewEnabled = false;
 let currentWorldMapData = null;
+/** @type {string|null} */
+let worldPreviewMeshGzipB64 = null;
+/** @type {string|null} */
+let importPreviewWorldPath = null;
+
+/** 2D modal map zoom (1 = fit width). */
+let worldPreview2dZoom = 1;
+
+/** Base64 zip for Tauri invoke — uses browser DataURL path (much faster than JS byte→string loops). */
+function fileToBase64DataUrlTail(file) {
+  return new Promise((resolve, reject) => {
+    const r = new FileReader();
+    r.onload = () => {
+      const s = r.result;
+      if (typeof s !== 'string') {
+        reject(new Error('Read failed'));
+        return;
+      }
+      const comma = s.indexOf(',');
+      resolve(comma >= 0 ? s.slice(comma + 1) : s);
+    };
+    r.onerror = () => reject(r.error || new Error('Read failed'));
+    r.readAsDataURL(file);
+  });
+}
+
+async function importZipAndPreview(file, statusElement) {
+  if (!file) return;
+  if (statusElement) {
+    statusElement.style.color = '#9ecbff';
+    statusElement.textContent = 'Reading zip…';
+  }
+
+  const zipBase64 = await fileToBase64DataUrlTail(file);
+
+  if (statusElement) statusElement.textContent = 'Building preview…';
+  const preview = await invoke('gui_build_import_preview_from_zip_base64', { zipBase64 });
+  if (!preview || !preview.image_base64) {
+    throw new Error('Could not build preview from zip');
+  }
+
+  currentWorldMapData = {
+    image_base64: preview.image_base64,
+    min_mc_x: preview.min_mc_x || 0,
+    max_mc_x: preview.max_mc_x || 0,
+    min_mc_z: preview.min_mc_z || 0,
+    max_mc_z: preview.max_mc_z || 0,
+    min_lat: 0,
+    max_lat: 0,
+    min_lon: 0,
+    max_lon: 0,
+  };
+  worldPreviewMeshGzipB64 = null;
+  importPreviewWorldPath = preview.world_path || null;
+
+  const meshWp = importPreviewWorldPath;
+  if (meshWp) {
+    const pullMeshCache = async () => {
+      try {
+        const m = await invoke('gui_get_world_preview_mesh_gzip_base64', { worldPath: meshWp });
+        if (m) worldPreviewMeshGzipB64 = m;
+      } catch (_) {}
+    };
+    void pullMeshCache();
+    window.setTimeout(pullMeshCache, 1200);
+    window.setTimeout(pullMeshCache, 4000);
+  }
+
+  const mapFrame = document.querySelector('.map-container');
+  if (mapFrame && mapFrame.contentWindow) {
+    mapFrame.contentWindow.postMessage({
+      type: 'worldPreviewReady',
+      data: currentWorldMapData
+    }, '*');
+  }
+
+  openWorldPreviewModal(currentWorldMapData.image_base64);
+  if (statusElement) {
+    statusElement.style.color = '#8de38d';
+    statusElement.textContent = 'Imported. Preview ready.';
+  }
+}
+
+function applyWorldPreview2dZoom() {
+  const img = document.getElementById('world-preview-modal-img');
+  const label = document.getElementById('world-preview-zoom-label');
+  if (!img) return;
+  img.style.width = `${worldPreview2dZoom * 100}%`;
+  img.style.maxWidth = 'none';
+  if (label) {
+    label.textContent = `${Math.round(worldPreview2dZoom * 100)}%`;
+  }
+}
+
+function resetWorldPreview2dZoom() {
+  worldPreview2dZoom = 1;
+  const wrap = document.getElementById('world-preview-img-wrap');
+  applyWorldPreview2dZoom();
+  if (wrap) {
+    wrap.scrollLeft = 0;
+    wrap.scrollTop = 0;
+  }
+}
+
+function initWorldPreview2dZoom() {
+  if (initWorldPreview2dZoom._inited) return;
+  initWorldPreview2dZoom._inited = true;
+  const wrap = document.getElementById('world-preview-img-wrap');
+  const btnIn = document.getElementById('world-preview-zoom-in');
+  const btnOut = document.getElementById('world-preview-zoom-out');
+  const btnReset = document.getElementById('world-preview-zoom-reset');
+  if (!wrap || !btnIn || !btnOut || !btnReset) return;
+
+  btnIn.addEventListener('click', () => {
+    worldPreview2dZoom = Math.min(6, worldPreview2dZoom * 1.2);
+    applyWorldPreview2dZoom();
+  });
+  btnOut.addEventListener('click', () => {
+    worldPreview2dZoom = Math.max(0.2, worldPreview2dZoom / 1.2);
+    applyWorldPreview2dZoom();
+  });
+  btnReset.addEventListener('click', () => resetWorldPreview2dZoom());
+
+  wrap.addEventListener(
+    'wheel',
+    (e) => {
+      const dy = e.deltaY;
+      if (Math.abs(dy) < 0.5) return;
+      e.preventDefault();
+      const factor = dy > 0 ? 0.92 : 1.08;
+      worldPreview2dZoom = Math.min(6, Math.max(0.2, worldPreview2dZoom * factor));
+      applyWorldPreview2dZoom();
+    },
+    { passive: false }
+  );
+}
 
 /**
  * Notifies the map iframe that world preview data is ready
  * Called when the backend emits the map-preview-ready event
  */
 async function showWorldPreviewButton() {
-  // Try to load the world map data
-  await loadWorldMapData();
+  // Retry briefly: PNG may not be visible to the next read the same millisecond it was written.
+  for (let attempt = 0; attempt < 15; attempt++) {
+    await loadWorldMapData();
+    if (currentWorldMapData) break;
+    await new Promise((r) => setTimeout(r, 80));
+  }
+  // Never await mesh I/O here — preload cache only (3D can arrive seconds later).
+  void loadWorldMeshData().catch((e) => console.warn("3D mesh preload skipped:", e));
+  if (worldPath && worldPath.trim()) {
+    const wp = worldPath;
+    window.setTimeout(() => {
+      void loadWorldMeshData().catch(() => {});
+    }, 1200);
+    window.setTimeout(() => {
+      void loadWorldMeshData().catch(() => {});
+    }, 4000);
+  }
 
   if (currentWorldMapData) {
-    // Send data to the map iframe
     const mapFrame = document.querySelector('.map-container');
     if (mapFrame && mapFrame.contentWindow) {
       mapFrame.contentWindow.postMessage({
@@ -940,9 +1108,265 @@ async function showWorldPreviewButton() {
       }, '*');
       console.log("World preview data sent to map iframe");
     }
+    openWorldPreviewModal(currentWorldMapData.image_base64);
   } else {
     console.warn("Map data not available yet");
   }
+}
+
+/**
+ * Shows the preview dialog (2D + optional 3D mesh).
+ * @param {string} imageDataUrl
+ */
+function openWorldPreviewModal(imageDataUrl) {
+  const modal = document.getElementById('world-preview-modal');
+  const img = document.getElementById('world-preview-modal-img');
+  if (!modal || !img) return;
+  img.src = imageDataUrl || '';
+  const title =
+    (window.localization && window.localization.world_preview_title) || 'World preview';
+  img.alt = title;
+  modal.style.display = 'flex';
+  modal.style.justifyContent = 'center';
+  modal.style.alignItems = 'center';
+  resetWorldPreview2dZoom();
+  switchToWorldPreviewTab('2d');
+}
+
+function closeWorldPreviewModal() {
+  import('./preview3d.js')
+    .then((m) => m.disposePreview3d())
+    .catch(() => {});
+
+  const modal = document.getElementById('world-preview-modal');
+  const img = document.getElementById('world-preview-modal-img');
+  if (modal) modal.style.display = 'none';
+  if (img) img.src = '';
+}
+
+/**
+ * @param {'2d' | '3d'} which
+ */
+async function switchToWorldPreviewTab(which) {
+  const pane2 = document.getElementById('world-preview-pane-2d');
+  const pane3 = document.getElementById('world-preview-pane-3d');
+  const tab2 = document.getElementById('world-preview-tab-2d');
+  const tab3 = document.getElementById('world-preview-tab-3d');
+  const status = document.getElementById('world-preview-3d-status');
+  const canvas = document.getElementById('world-preview-3d-canvas');
+  const progressWrap = document.getElementById('world-preview-3d-progress-wrap');
+  const progressFill = document.getElementById('world-preview-3d-progress-fill');
+
+  if (!pane2 || !pane3 || !tab2 || !tab3) return;
+
+  if (which === '2d') {
+    import('./preview3d.js')
+      .then((m) => m.disposePreview3d())
+      .catch(() => {});
+    pane2.style.display = '';
+    pane3.style.display = 'none';
+    tab2.classList.add('world-preview-tab-active');
+    tab3.classList.remove('world-preview-tab-active');
+    tab2.setAttribute('aria-selected', 'true');
+    tab3.setAttribute('aria-selected', 'false');
+    return;
+  }
+
+  pane2.style.display = 'none';
+  pane3.style.display = '';
+  tab3.classList.add('world-preview-tab-active');
+  tab2.classList.remove('world-preview-tab-active');
+  tab3.setAttribute('aria-selected', 'true');
+  tab2.setAttribute('aria-selected', 'false');
+
+  if (!status || !canvas) return;
+
+  const set3dProgress = (pct, text, color = '#ececec') => {
+    if (progressWrap) progressWrap.style.display = 'block';
+    if (progressFill) progressFill.style.width = `${Math.max(0, Math.min(100, pct))}%`;
+    status.style.display = 'block';
+    status.style.color = color;
+    status.textContent = text;
+  };
+  const hide3dProgress = () => {
+    if (progressWrap) progressWrap.style.display = 'none';
+    if (progressFill) progressFill.style.width = '0%';
+  };
+
+  set3dProgress(
+    8,
+    (window.localization && window.localization.world_preview_3d_building) ||
+      'Loading 3D view…'
+  );
+
+  // Keep the status visible until the first frame is actually rendered.
+  let done = false;
+  const onFirstFrame = () => {
+    if (done) return;
+    done = true;
+    hide3dProgress();
+    status.style.display = 'none';
+    status.textContent = '';
+    window.removeEventListener('arnis-preview3d-first-frame', onFirstFrame);
+  };
+  window.addEventListener('arnis-preview3d-first-frame', onFirstFrame);
+
+  try {
+    if (!currentWorldMapData && worldPath) {
+      set3dProgress(15, 'Loading map preview…');
+      await loadWorldMapData();
+    }
+    if (!currentWorldMapData) {
+      set3dProgress(
+        100,
+        (window.localization && window.localization.world_preview_3d_no_map) ||
+          'Map image not loaded. Close and reopen preview after generation finishes.',
+        '#fa7878'
+      );
+      return;
+    }
+
+    const mod = await import('./preview3d.js');
+    const mcW = Math.max(
+      1,
+      (currentWorldMapData.max_mc_x || 0) - (currentWorldMapData.min_mc_x || 0) + 1
+    );
+    const mcH = Math.max(
+      1,
+      (currentWorldMapData.max_mc_z || 0) - (currentWorldMapData.min_mc_z || 0) + 1
+    );
+    const worldArea = mcW * mcH;
+    // Big maps are auto-switched to map-based 3D for stability/speed.
+    const useMapPlaneForLargeArea = worldArea > 1_800_000;
+
+    if (useMapPlaneForLargeArea) {
+      set3dProgress(45, 'Large area detected, using fast 3D preview…');
+      await mod.runPreview3dMapPlane(canvas, currentWorldMapData);
+      window.setTimeout(onFirstFrame, 900);
+      return;
+    }
+
+    let meshB64 = worldPreviewMeshGzipB64;
+    const meshWorldPath = importPreviewWorldPath || worldPath;
+    if (!meshB64 && meshWorldPath) {
+      set3dProgress(28, 'Checking cached 3D mesh…');
+      try {
+        meshB64 = await invoke('gui_get_world_preview_mesh_gzip_base64', {
+          worldPath: meshWorldPath
+        });
+        if (meshB64) {
+          worldPreviewMeshGzipB64 = meshB64;
+        }
+      } catch (e) {
+        console.warn('3D mesh cache read:', e);
+      }
+    }
+
+    if (!meshB64 && meshWorldPath) {
+      set3dProgress(
+        55,
+        (window.localization && window.localization.world_preview_3d_building) ||
+          'Building 3D block preview…'
+      );
+      await buildWorldPreviewMeshData(meshWorldPath);
+      meshB64 = worldPreviewMeshGzipB64;
+    }
+
+    const unavailableMsg =
+      (window.localization && window.localization.world_preview_3d_unavailable) ||
+      '3D preview could not be loaded for this world.';
+    const meshTooLargeMsg =
+      (window.localization && window.localization.world_preview_3d_mesh_too_large) ||
+      '3D model too large for the browser. Try a smaller area.';
+
+    if (meshB64) {
+      try {
+        set3dProgress(82, 'Decoding 3D mesh…');
+        await mod.runPreview3d(canvas, meshB64);
+        // If for any reason the first-frame event didn’t fire, hide the status after a bit.
+        window.setTimeout(onFirstFrame, 1500);
+      } catch (voxelErr) {
+        console.warn('Voxel 3D failed:', voxelErr);
+        const isTooLarge =
+          voxelErr &&
+          (voxelErr.message === 'MESH_TOO_LARGE' ||
+            String(voxelErr) === 'Error: MESH_TOO_LARGE');
+        if (isTooLarge) {
+          set3dProgress(60, '3D mesh too large, switching to fast preview…', '#d4a574');
+          await mod.runPreview3dMapPlane(canvas, currentWorldMapData);
+          window.setTimeout(onFirstFrame, 900);
+        } else {
+          set3dProgress(100, unavailableMsg, '#fa7878');
+        }
+      }
+    } else {
+      set3dProgress(60, 'No 3D mesh cache. Using fast preview…', '#d4a574');
+      await mod.runPreview3dMapPlane(canvas, currentWorldMapData);
+      window.setTimeout(onFirstFrame, 900);
+    }
+  } catch (e) {
+    console.error(e);
+    window.removeEventListener('arnis-preview3d-first-frame', onFirstFrame);
+    set3dProgress(
+      100,
+      (window.localization && window.localization.world_preview_3d_error) ||
+        String(e),
+      '#fa7878'
+    );
+  }
+}
+
+function initWorldPreviewModal() {
+  const modal = document.getElementById('world-preview-modal');
+  if (!modal) return;
+  modal.addEventListener('click', (e) => {
+    if (e.target === modal) {
+      closeWorldPreviewModal();
+    }
+  });
+
+  const tab2 = document.getElementById('world-preview-tab-2d');
+  const tab3 = document.getElementById('world-preview-tab-3d');
+  if (tab2) {
+    tab2.addEventListener('click', () => switchToWorldPreviewTab('2d'));
+  }
+  if (tab3) {
+    tab3.addEventListener('click', () => {
+      void switchToWorldPreviewTab('3d').catch((err) => console.error('3D preview tab:', err));
+    });
+  }
+
+  initWorldPreview2dZoom();
+  initHomepageImport();
+}
+
+function initHomepageImport() {
+  if (initHomepageImport._inited) return;
+  initHomepageImport._inited = true;
+
+  const btn = document.getElementById('import-world-btn');
+  const input = document.getElementById('import-world-file');
+  const status = document.getElementById('import-world-status');
+  if (!btn || !input) return;
+
+  btn.addEventListener('click', () => input.click());
+  input.addEventListener('change', async () => {
+    const f = input.files && input.files[0];
+    if (!f) return;
+    try {
+      await importZipAndPreview(f, status || null);
+      const selectedWorld = document.getElementById('selected-world');
+      if (selectedWorld) {
+        selectedWorld.textContent = f.name;
+        selectedWorld.style.color = '#8de38d';
+      }
+    } catch (e) {
+      if (status) {
+        status.style.color = '#fa7878';
+        status.textContent = `Import failed: ${String(e)}`;
+      }
+    }
+  });
 }
 
 /**
@@ -950,6 +1374,9 @@ async function showWorldPreviewButton() {
  */
 function notifyWorldChanged() {
   currentWorldMapData = null;
+  worldPreviewMeshGzipB64 = null;
+  importPreviewWorldPath = null;
+  updatePreviewButtonEnabled();
   const mapFrame = document.querySelector('.map-container');
   if (mapFrame && mapFrame.contentWindow) {
     mapFrame.contentWindow.postMessage({
@@ -958,12 +1385,45 @@ function notifyWorldChanged() {
   }
 }
 
+function updatePreviewButtonEnabled() {
+  const btn = document.getElementById('preview-button');
+  if (!btn) return;
+
+  const enabled = selectedWorldFormat === 'java' && Boolean(worldPath && worldPath.trim());
+  btn.disabled = !enabled;
+  btn.style.opacity = enabled ? '1' : '0.6';
+  btn.style.cursor = enabled ? 'pointer' : 'not-allowed';
+}
+
+async function openWorldPreview() {
+  if (selectedWorldFormat !== 'java' || !worldPath) return;
+
+  // If a preview already exists on disk, load it and open immediately.
+  await loadWorldMapData();
+  if (!currentWorldMapData) {
+    // If there is no map image yet, the user truly needs to generate once.
+    const selectedWorldText = document.getElementById('selected-world');
+    if (selectedWorldText) {
+      const msg =
+        (window.localization && window.localization.world_preview_3d_no_map) ||
+        'Map image not loaded. Close and reopen preview after generation finishes.';
+      selectedWorldText.textContent = msg;
+      selectedWorldText.style.color = '#fa7878';
+    }
+    return;
+  }
+
+  // Preload mesh cache if it exists; do not block UI.
+  void loadWorldMeshData().catch(() => {});
+  openWorldPreviewModal(currentWorldMapData.image_base64);
+}
+
 /**
  * Loads the world map data from the backend
  */
 async function loadWorldMapData() {
   if (!worldPath) return;
-  
+
   try {
     const mapData = await invoke('gui_get_world_map_data', { worldPath: worldPath });
     if (mapData) {
@@ -972,5 +1432,36 @@ async function loadWorldMapData() {
     }
   } catch (error) {
     console.error("Failed to load world map data:", error);
+  }
+}
+
+/** Reads cached `arnis_preview_mesh.bin.gz` only (fast). */
+async function loadWorldMeshData() {
+  if (!worldPath) return;
+
+  const meshB64 = await invoke('gui_get_world_preview_mesh_gzip_base64', {
+    worldPath: worldPath
+  });
+  if (meshB64) {
+    worldPreviewMeshGzipB64 = meshB64;
+    console.log("World 3D mesh cache loaded");
+  }
+}
+
+/** Full mesh build from disk (slow) — use on 3D tab only. */
+async function buildWorldPreviewMeshData(forWorldPath) {
+  const targetPath = forWorldPath || worldPath;
+  if (!targetPath) return;
+
+  try {
+    const meshB64 = await invoke('gui_build_world_preview_mesh_gzip_base64', {
+      worldPath: targetPath
+    });
+    if (meshB64) {
+      worldPreviewMeshGzipB64 = meshB64;
+      console.log("World 3D mesh built");
+    }
+  } catch (e) {
+    console.warn("3D mesh build failed:", e);
   }
 }

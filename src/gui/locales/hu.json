@@ -12,7 +12,7 @@
   "floodfill_timeout": "Floodfill Timeout (sec)",
   "ground_level": "Földszint",
   "customization_settings": "Testreszabási lehetőségek",
-  "footer_text": "© {year} Arnis v{version} by louis-e",
+  "footer_text": "© {year} Arnis v{version} by louis-e · Improved by Hadoiz",
   "new_version_available": "Egy új verzió elérhető kattints ide hogy letöltsd",
   "minecraft_directory_not_found": "Minecraft mappa nem található",
   "world_in_use": "A kiválasztott világ már használatban van",
@@ -40,7 +40,7 @@
   "interior": "Belső generálás",
   "roof": "Tető generálás",
   "fillground": "Talaj feltöltése",
-  "land_cover": "Felszínborítás",
+  "city_boundaries": "Városi talaj",
   "bedrock_auto_generated": "A Bedrock világ automatikusan generálódik",
   "save_path": "Mentési útvonal"
 }

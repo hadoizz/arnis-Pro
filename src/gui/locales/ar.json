@@ -12,7 +12,7 @@
   "floodfill_timeout": "مهلة ملء الفيضان (ثواني)",
   "ground_level": "مستوى الأرض",
   "customization_settings": "إعدادات التخصيص",
-  "footer_text": "© {year} Arnis v{version} من louis-e",
+  "footer_text": "© {year} Arnis v{version} من louis-e · Improved by Hadoiz",
   "new_version_available": "هناك نسخة جديدة متاحة! انقر هنا لتنزيلها.",
   "minecraft_directory_not_found": "لم يتم العثور على مجلد ماين كرافت",
   "world_in_use": "العالم المحدد قيد الاستخدام حاليًا",
@@ -40,7 +40,7 @@
   "interior": "توليد الداخلية",
   "roof": "توليد السقف",
   "fillground": "ملء الأرض",
-  "land_cover": "تصنيف الأرض",
+  "city_boundaries": "أرضية المدينة",
   "bedrock_auto_generated": "يتم إنشاء عالم Bedrock تلقائيًا",
   "save_path": "مسار الحفظ"
 }

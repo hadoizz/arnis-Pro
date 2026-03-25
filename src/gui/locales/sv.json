@@ -12,7 +12,7 @@
   "floodfill_timeout": "Floodfill-tidsgräns (sek)",
   "ground_level": "Marknivå",
   "customization_settings": "Anpassningsinställningar",
-  "footer_text": "© {year} Arnis v{version} by louis-e",
+  "footer_text": "© {year} Arnis v{version} by louis-e · Improved by Hadoiz",
   "new_version_available": "Det finns en ny version tillgänglig! Klicka här för att ladda ner den.",
   "minecraft_directory_not_found": "Minecraft-katalogen hittades inte",
   "world_in_use": "Den valda världen används just nu",
@@ -40,7 +40,7 @@
   "interior": "Interiörgenerering",
   "roof": "Takgenerering",
   "fillground": "Fyll mark",
-  "land_cover": "Marktäcke",
+  "city_boundaries": "Stadsmark",
   "bedrock_auto_generated": "Bedrock-världen genereras automatiskt",
   "save_path": "Sökväg"
 }

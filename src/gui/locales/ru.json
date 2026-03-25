@@ -12,7 +12,7 @@
   "floodfill_timeout": "Тайм-аут заливки (сек)",
   "ground_level": "Уровень земли",
   "customization_settings": "Настройки персонализации",
-  "footer_text": "© {year} Arnis v{version} от louis-e",
+  "footer_text": "© {year} Arnis v{version} от louis-e · Improved by Hadoiz",
   "new_version_available": "Доступна новая версия! Нажмите здесь, чтобы скачать",
   "minecraft_directory_not_found": "Каталог Minecraft не найден",
   "world_in_use": "Выбранный мир уже используется",
@@ -40,7 +40,7 @@
   "interior": "Генерация Интерьера",
   "roof": "Генерация Крыши",
   "fillground": "Заполнить Землю",
-  "land_cover": "Земельный покров",
+  "city_boundaries": "Городской грунт",
   "bedrock_auto_generated": "Мир Bedrock генерируется автоматически",
   "save_path": "Путь сохранения"
 }

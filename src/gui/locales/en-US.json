@@ -1,5 +1,6 @@
 {
   "create_world": "Create World",
+  "import_world": "Import Map Zip",
   "no_world_selected": "No world created",
   "start_generation": "Start Generation",
   "custom_selection_confirmed": "Custom selection confirmed!",
@@ -12,7 +13,7 @@
   "floodfill_timeout": "Floodfill Timeout (sec)",
   "ground_level": "Ground Level",
   "customization_settings": "Customization Settings",
-  "footer_text": "© {year} Arnis v{version} by louis-e",
+  "footer_text": "© {year} Arnis v{version} by louis-e · Improved by Hadoiz",
   "new_version_available": "There's a new version available! Click here to download it.",
   "minecraft_directory_not_found": "Minecraft directory not found",
   "world_in_use": "The selected world is currently in use",
@@ -40,7 +41,19 @@
   "interior": "Interior Generation",
   "roof": "Roof Generation",
   "fillground": "Fill Ground",
-  "land_cover": "Land Cover",
+  "city_boundaries": "City Ground",
   "bedrock_auto_generated": "Bedrock world is auto-generated",
-  "save_path": "Save Path"
+  "save_path": "Save Path",
+  "world_preview_title": "World preview",
+  "world_preview_hint": "2D is the exact top-down render. 3D uses real block geometry from your Java world (drag to orbit, scroll to zoom). If the block model is unavailable or too large, the app falls back to a tilted 2D map.",
+  "world_preview_tab_2d": "2D map",
+  "world_preview_tab_3d": "3D",
+  "world_preview_3d_building": "Building 3D preview…",
+  "world_preview_3d_no_map": "Map image not loaded. Try closing and opening the preview again.",
+  "world_preview_3d_unavailable": "3D preview could not be loaded. This needs a Java world folder with metadata.json (generate once in Arnis). Bedrock worlds are not supported for 3D here.",
+  "world_preview_3d_error": "Could not display the 3D preview.",
+  "world_preview_3d_fallback_map": "Block model unavailable — showing the tilted map instead.",
+  "world_preview_3d_mesh_too_large": "3D model too large for the browser — showing the tilted map instead. Try a smaller selection.",
+  "world_preview_open_btn": "Preview",
+  "world_preview_close": "Close"
 }

@@ -12,7 +12,7 @@
   "floodfill_timeout": "Täytön aikakatkaisu (sec)",
   "ground_level": "Maataso",
   "customization_settings": "Kustomisaatio-asetukset",
-  "footer_text": "© {year} Arnis v{version} tekijänä louis-e",
+  "footer_text": "© {year} Arnis v{version} tekijänä louis-e · Improved by Hadoiz",
   "new_version_available": "Uusi versio on saatavilla! Paina tästä ladataksesi sen.",
   "minecraft_directory_not_found": "Minecraft-hakemistoa ei löytynyt",
   "world_in_use": "Valittu maailma käytössä.",
@@ -40,7 +40,7 @@
   "interior": "Sisätilan luonti",
   "roof": "Katon luonti",
   "fillground": "Täytä maa",
-  "land_cover": "Maanpeite",
+  "city_boundaries": "Kaupungin maa",
   "bedrock_auto_generated": "Bedrock-maailma luodaan automaattisesti",
   "save_path": "Tallennuspolku"
 }

@@ -12,7 +12,7 @@
   "floodfill_timeout": "Užpildymo laiko limitas (sek.)",
   "ground_level": "Žemės lygis",
   "customization_settings": "Generacijos nustatymai",
-  "footer_text": "© {year} „Arnis“ v{version} sukurta louis-e",
+  "footer_text": "© {year} „Arnis“ v{version} sukurta louis-e · Improved by Hadoiz",
   "new_version_available": "Surasta nauja versija! Spauskite čia kad ją atsisiųstumėte.",
   "minecraft_directory_not_found": "Nerastas „Minecraft“ aplankas",
   "world_in_use": "Pasirinktas pasaulis dabar užimtas",
@@ -40,7 +40,7 @@
   "interior": "Interjero generavimas",
   "roof": "Stogo generavimas",
   "fillground": "Užpildyti pagrindą",
-  "land_cover": "Žemės danga",
+  "city_boundaries": "Miesto žemė",
   "bedrock_auto_generated": "Bedrock pasaulis generuojamas automatiškai",
   "save_path": "Išsaugojimo kelias"
 }

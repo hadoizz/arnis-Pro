@@ -12,7 +12,7 @@
   "floodfill_timeout": "Floodfill-Timeout (Sek)",
   "ground_level": "Bodenhöhe",
   "customization_settings": "Einstellungen",
-  "footer_text": "© {year} Arnis v{version} von louis-e",
+  "footer_text": "© {year} Arnis v{version} von louis-e · Improved by Hadoiz",
   "new_version_available": "Eine neue Version ist verfügbar! Klicke hier, um sie herunterzuladen.",
   "minecraft_directory_not_found": "Minecraft Verzeichnis nicht gefunden",
   "world_in_use": "Die ausgewählte Welt ist gerade in Benutzung",
@@ -40,7 +40,7 @@
   "interior": "Innenraum Generierung",
   "roof": "Dach Generierung",
   "fillground": "Boden füllen",
-  "land_cover": "Landbedeckung",
+  "city_boundaries": "Stadtboden",
   "bedrock_auto_generated": "Bedrock-Welt wird automatisch generiert",
   "save_path": "Speicherpfad"
 }

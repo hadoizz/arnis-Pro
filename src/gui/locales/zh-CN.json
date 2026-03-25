@@ -12,7 +12,7 @@
   "floodfill_timeout": "填充超时（秒）",
   "ground_level": "地面高度",
   "customization_settings": "自定义设置",
-  "footer_text": "© {year} Arnis v{version} 由 louis-e 提供",
+  "footer_text": "© {year} Arnis v{version} 由 louis-e 提供 · Improved by Hadoiz",
   "new_version_available": "有新版本可用！点击这里下载。",
   "minecraft_directory_not_found": "未找到 Minecraft 目录",
   "world_in_use": "所选世界正在使用中",
@@ -40,7 +40,7 @@
   "interior": "内部生成",
   "roof": "屋顶生成",
   "fillground": "填充地面",
-  "land_cover": "土地覆盖",
+  "city_boundaries": "城市地面",
   "bedrock_auto_generated": "Bedrock 世界自动生成",
   "save_path": "存档路径"
 }

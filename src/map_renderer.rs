@@ -13,11 +13,27 @@ use std::fs::File;
 use std::path::Path;
 use std::sync::Mutex;
 
+/// Max width/height in pixels for GUI preview PNGs. Worlds are sampled with stride so larger maps
+/// render in roughly O(edge²) image work instead of O(blocks²) pixels.
+pub const PREVIEW_MAP_MAX_EDGE_PX: u32 = 2048;
+
 /// Pre-computed block colors for fast lookup
 static BLOCK_COLORS: Lazy<FnvHashMap<&'static str, Rgb<u8>>> = Lazy::new(get_block_colors);
 
+/// RGB color for a full block id (e.g. `minecraft:stone`) — used by 3D preview mesh.
+pub fn rgb_for_block_name(name: &str) -> Rgb<u8> {
+    let short = name.strip_prefix("minecraft:").unwrap_or(name);
+    BLOCK_COLORS
+        .get(short)
+        .copied()
+        .unwrap_or_else(|| get_fallback_color(name))
+}
+
 /// Renders a top-down view of the generated Minecraft world.
 /// Returns the path to the saved image file.
+///
+/// Uses [`PREVIEW_MAP_MAX_EDGE_PX`] so huge worlds don’t allocate gigapixel images or spend time
+/// filling every block column for the GUI; world bounds in `metadata.json` stay full-scale for 3D.
 pub fn render_world_map(
     world_dir: &Path,
     min_x: i32,
@@ -25,8 +41,39 @@ pub fn render_world_map(
     min_z: i32,
     max_z: i32,
 ) -> Result<std::path::PathBuf, String> {
-    let width = (max_x - min_x + 1) as u32;
-    let height = (max_z - min_z + 1) as u32;
+    render_world_map_preview(world_dir, min_x, max_x, min_z, max_z, PREVIEW_MAP_MAX_EDGE_PX)
+}
+
+/// Same as [`render_world_map`] but allows a custom cap (use `u32::MAX` for legacy 1:1 block pixels).
+pub fn render_world_map_preview(
+    world_dir: &Path,
+    min_x: i32,
+    max_x: i32,
+    min_z: i32,
+    max_z: i32,
+    max_edge_px: u32,
+) -> Result<std::path::PathBuf, String> {
+    let block_w = (max_x as i64)
+        .saturating_sub(min_x as i64)
+        .saturating_add(1)
+        .max(1);
+    let block_h = (max_z as i64)
+        .saturating_sub(min_z as i64)
+        .saturating_add(1)
+        .max(1);
+
+    let stride: i32 = if max_edge_px == 0 || max_edge_px == u32::MAX {
+        1
+    } else {
+        let long_edge = block_w.max(block_h);
+        let s = (long_edge + max_edge_px as i64 - 1) / max_edge_px as i64;
+        s.max(1).min(i64::from(i32::MAX)) as i32
+    };
+
+    let width_u = div_ceil_pos(block_w as u64, stride as u64);
+    let height_u = div_ceil_pos(block_h as u64, stride as u64);
+    let width = u32::try_from(width_u).map_err(|_| "Map preview width overflow".to_string())?;
+    let height = u32::try_from(height_u).map_err(|_| "Map preview height overflow".to_string())?;
 
     if width == 0 || height == 0 {
         return Err("Invalid world bounds".to_string());
@@ -67,6 +114,7 @@ pub fn render_world_map(
                     min_z,
                     max_x,
                     max_z,
+                    stride,
                 );
 
                 // Then batch-write to image under lock
@@ -92,6 +140,14 @@ pub fn render_world_map(
     Ok(output_path)
 }
 
+#[inline]
+fn div_ceil_pos(a: u64, b: u64) -> u64 {
+    if b == 0 {
+        return a;
+    }
+    (a + b - 1) / b
+}
+
 /// Renders all chunks within a region and returns pixel data
 fn render_region_to_pixels(
     region: &mut Region<File>,
@@ -101,6 +157,7 @@ fn render_region_to_pixels(
     min_z: i32,
     max_x: i32,
     max_z: i32,
+    stride: i32,
 ) -> Vec<(u32, u32, Rgb<u8>)> {
     let mut pixels = Vec::new();
     let region_base_x = region_x * 512;
@@ -132,6 +189,7 @@ fn render_region_to_pixels(
                     min_z,
                     max_x,
                     max_z,
+                    stride,
                 );
             }
         }
@@ -151,6 +209,7 @@ fn render_chunk_to_pixels(
     min_z: i32,
     max_x: i32,
     max_z: i32,
+    stride: i32,
 ) {
     // Parse chunk NBT - look for Level.sections or sections depending on format
     let chunk: Value = match from_bytes(chunk_data) {
@@ -181,6 +240,14 @@ fn render_chunk_to_pixels(
                 continue;
             }
 
+            if stride > 1 {
+                let dx = world_x - min_x;
+                let dz = world_z - min_z;
+                if dx % stride != 0 || dz % stride != 0 {
+                    continue;
+                }
+            }
+
             // Find topmost non-air block using pre-sorted sections
             if let Some((block_name, world_y)) =
                 find_top_block_sorted(&sorted_sections, local_x as usize, local_z as usize)
@@ -196,8 +263,8 @@ fn render_chunk_to_pixels(
                 // Apply elevation shading
                 let color = apply_elevation_shading(base_color, world_y);
 
-                let img_x = (world_x - min_x) as u32;
-                let img_z = (world_z - min_z) as u32;
+                let img_x = ((world_x - min_x) / stride) as u32;
+                let img_z = ((world_z - min_z) / stride) as u32;
 
                 pixels.push((img_x, img_z, color));
             }
@@ -234,8 +301,61 @@ fn apply_elevation_shading(color: Rgb<u8>, y: i32) -> Rgb<u8> {
     ])
 }
 
+/// Block at exact local coordinates within a section (0..16 for each axis).
+/// Used by the 3D preview mesh (all blocks including air).
+pub(crate) fn block_name_at_local_in_section(
+    section: &Value,
+    lx: usize,
+    ly: usize,
+    lz: usize,
+) -> Option<String> {
+    let section_map = match section {
+        Value::Compound(m) => m,
+        _ => return None,
+    };
+
+    let block_states = match section_map.get("block_states") {
+        Some(Value::Compound(bs)) => bs,
+        _ => return None,
+    };
+
+    let palette = match block_states.get("palette") {
+        Some(Value::List(p)) => p,
+        _ => return None,
+    };
+
+    if palette.len() == 1 {
+        return get_block_name_from_palette(&palette[0]);
+    }
+
+    let data = match block_states.get("data") {
+        Some(Value::LongArray(d)) => d,
+        _ => return None,
+    };
+
+    let bits_per_block = std::cmp::max(4, (palette.len() as f64).log2().ceil() as usize);
+    let blocks_per_long = 64 / bits_per_block;
+    let mask = (1u64 << bits_per_block) - 1;
+
+    let block_index = ly * 256 + lz * 16 + lx;
+    let long_index = block_index / blocks_per_long;
+    let bit_offset = (block_index % blocks_per_long) * bits_per_block;
+
+    if long_index >= data.len() {
+        return None;
+    }
+
+    let palette_index = ((data[long_index] as u64 >> bit_offset) & mask) as usize;
+
+    if palette_index < palette.len() {
+        return get_block_name_from_palette(&palette[palette_index]);
+    }
+
+    None
+}
+
 /// Extracts sections from chunk data (handles both old and new formats)
-fn get_sections_from_chunk(chunk: &Value) -> Vec<&Value> {
+pub(crate) fn get_sections_from_chunk(chunk: &Value) -> Vec<&Value> {
     let mut sections = Vec::new();
 
     // Try new format (1.18+): directly in chunk
@@ -372,7 +492,7 @@ fn get_block_name_from_palette(entry: &Value) -> Option<String> {
 }
 
 /// Checks if a block should be considered transparent (look through it)
-fn is_transparent_block(name: &str) -> bool {
+pub(crate) fn is_transparent_block(name: &str) -> bool {
     let short_name = name.strip_prefix("minecraft:").unwrap_or(name);
     matches!(
         short_name,

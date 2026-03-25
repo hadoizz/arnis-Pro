@@ -3,6 +3,7 @@ use crate::coordinate_system::cartesian::{XZBBox, XZPoint};
 use crate::coordinate_system::geographic::{LLBBox, LLPoint};
 use crate::coordinate_system::transformation::CoordTransformer;
 use crate::data_processing::{self, GenerationOptions};
+use crate::preview_mesh;
 use crate::ground::{self, Ground};
 use crate::map_transformation;
 use crate::osm_parser;
@@ -17,10 +18,12 @@ use flate2::read::GzDecoder;
 use fs2::FileExt;
 use log::LevelFilter;
 use rfd::FileDialog;
+use std::io::Cursor;
 use std::io::Read;
 use std::path::{Path, PathBuf};
 use std::{env, fs, io::Write};
 use tauri_plugin_log::{Builder as LogBuilder, Target, TargetKind};
+use zip::ZipArchive;
 
 /// Manages the session.lock file for a Minecraft world directory
 struct SessionLock {
@@ -113,6 +116,10 @@ pub fn run_gui() {
             gui_get_version,
             gui_check_for_updates,
             gui_get_world_map_data,
+            gui_get_preview_map_from_zip_base64,
+            gui_build_import_preview_from_zip_base64,
+            gui_get_world_preview_mesh_gzip_base64,
+            gui_build_world_preview_mesh_gzip_base64,
             gui_show_in_folder
         ])
         .setup(|app| {
@@ -168,6 +175,373 @@ fn detect_minecraft_saves_directory() -> PathBuf {
 
     // Last resort: current directory
     env::current_dir().unwrap_or_else(|_| PathBuf::from("."))
+}
+
+/// Extract `arnis_world_map.png` from a zip/.mcworld payload and return a data URL.
+/// This is used by the GUI import-preview tab so users can preview without re-generating.
+#[tauri::command]
+fn gui_get_preview_map_from_zip_base64(zip_base64: String) -> Result<Option<String>, String> {
+    // 60 MB safety cap (base64 inflates ~33%)
+    if zip_base64.len() > 80_000_000 {
+        return Err("Zip is too large for preview".to_string());
+    }
+
+    let bytes = base64::Engine::decode(&base64::engine::general_purpose::STANDARD, zip_base64.trim())
+        .map_err(|e| format!("Invalid base64 zip: {e}"))?;
+    if bytes.is_empty() {
+        return Ok(None);
+    }
+
+    let cursor = Cursor::new(bytes);
+    let mut zip = ZipArchive::new(cursor).map_err(|e| format!("Invalid zip: {e}"))?;
+
+    // Look for `arnis_world_map.png` anywhere in the archive.
+    for i in 0..zip.len() {
+        let mut f = zip.by_index(i).map_err(|e| format!("Zip read: {e}"))?;
+        if !f.is_file() {
+            continue;
+        }
+        let name = f.name().replace('\\', "/");
+        let lower = name.to_lowercase();
+        if !lower.ends_with("arnis_world_map.png") {
+            continue;
+        }
+        // Another safety cap: don’t read crazy huge “png”.
+        if f.size() > 25_000_000 {
+            return Err("Preview image in zip is too large".to_string());
+        }
+        let mut png = Vec::with_capacity(f.size() as usize);
+        f.read_to_end(&mut png)
+            .map_err(|e| format!("Zip extract: {e}"))?;
+        if png.is_empty() {
+            return Ok(None);
+        }
+        let b64 = base64::Engine::encode(&base64::engine::general_purpose::STANDARD, &png);
+        return Ok(Some(format!("data:image/png;base64,{b64}")));
+    }
+
+    Ok(None)
+}
+
+#[derive(serde::Serialize)]
+struct ImportPreviewResult {
+    image_base64: String,
+    min_mc_x: i32,
+    max_mc_x: i32,
+    min_mc_z: i32,
+    max_mc_z: i32,
+    world_path: String,
+}
+
+/// Build a real preview from a world zip/.mcworld (without normal generation flow).
+/// - Extract archive to a temp folder
+/// - Locate world root with `region/*.mca`
+/// - Detect chunk bounds
+/// - Render `arnis_world_map.png`
+/// Returns image data URL + MC bounds for optional future use.
+#[tauri::command]
+fn gui_build_import_preview_from_zip_base64(zip_base64: String) -> Result<ImportPreviewResult, String> {
+    if zip_base64.len() > 120_000_000 {
+        return Err("Zip is too large for import preview".to_string());
+    }
+
+    let bytes = base64::Engine::decode(&base64::engine::general_purpose::STANDARD, zip_base64.trim())
+        .map_err(|e| format!("Invalid base64 zip: {e}"))?;
+    if bytes.is_empty() {
+        return Err("Zip file is empty".to_string());
+    }
+
+    let mut zip = ZipArchive::new(Cursor::new(bytes)).map_err(|e| format!("Invalid zip: {e}"))?;
+
+    let stamp = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_millis())
+        .unwrap_or(0);
+    let out_root = env::temp_dir().join(format!("arnis-import-preview-{stamp}"));
+    fs::create_dir_all(&out_root).map_err(|e| format!("Create temp dir failed: {e}"))?;
+
+    extract_zip_archive(&mut zip, &out_root)?;
+
+    // Prefer true Java region data (same path used by generated worlds) so import preview and
+    // generation preview match in 2D/3D behavior.
+    let maybe_world = find_best_world_root_and_bounds(&out_root);
+    if maybe_world.is_none() {
+        // Fallback only when no usable Java chunks exist.
+        if let Some(png) = find_preview_png_in_tree(&out_root) {
+            let image_base64 = format!(
+                "data:image/png;base64,{}",
+                base64::Engine::encode(&base64::engine::general_purpose::STANDARD, &png)
+            );
+            return Ok(ImportPreviewResult {
+                image_base64,
+                min_mc_x: 0,
+                max_mc_x: 0,
+                min_mc_z: 0,
+                max_mc_z: 0,
+                world_path: out_root.to_string_lossy().to_string(),
+            });
+        }
+        return Err(
+            "No Java region chunks found in zip. Bedrock archives are not supported for real preview yet."
+                .to_string(),
+        );
+    }
+    let (world_root, min_x, max_x, min_z, max_z) = maybe_world.unwrap();
+
+    crate::map_renderer::render_world_map(&world_root, min_x, max_x, min_z, max_z)?;
+    let mesh_world = world_root.clone();
+    let mesh_min_x = min_x;
+    let mesh_max_x = max_x;
+    let mesh_min_z = min_z;
+    let mesh_max_z = max_z;
+    std::thread::spawn(move || {
+        let _ = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            match preview_mesh::generate_preview_mesh_gzip(
+                &mesh_world,
+                mesh_min_x,
+                mesh_max_x,
+                mesh_min_z,
+                mesh_max_z,
+            ) {
+                Ok(gz) => {
+                    let mesh_path = mesh_world.join("arnis_preview_mesh.bin.gz");
+                    if let Err(e) = fs::write(&mesh_path, gz) {
+                        eprintln!("Warning: import 3D preview mesh write failed: {e}");
+                    }
+                }
+                Err(e) => eprintln!("Warning: import 3D preview mesh skipped: {e}"),
+            }
+        }));
+    });
+    let metadata = serde_json::json!({
+        "minMcX": min_x,
+        "maxMcX": max_x,
+        "minMcZ": min_z,
+        "maxMcZ": max_z,
+        "minLat": 0.0,
+        "maxLat": 0.0,
+        "minLon": 0.0,
+        "maxLon": 0.0
+    });
+    let metadata_path = world_root.join("metadata.json");
+    fs::write(
+        &metadata_path,
+        serde_json::to_string_pretty(&metadata).map_err(|e| format!("Metadata encode failed: {e}"))?,
+    )
+    .map_err(|e| format!("Write metadata failed: {e}"))?;
+
+    let png_path = world_root.join("arnis_world_map.png");
+    let png = fs::read(&png_path).map_err(|e| format!("Read rendered preview failed: {e}"))?;
+    let image_base64 = format!(
+        "data:image/png;base64,{}",
+        base64::Engine::encode(&base64::engine::general_purpose::STANDARD, &png)
+    );
+
+    Ok(ImportPreviewResult {
+        image_base64,
+        min_mc_x: min_x,
+        max_mc_x: max_x,
+        min_mc_z: min_z,
+        max_mc_z: max_z,
+        world_path: world_root.to_string_lossy().to_string(),
+    })
+}
+
+fn extract_zip_archive<R: Read + std::io::Seek>(
+    zip: &mut ZipArchive<R>,
+    out_root: &Path,
+) -> Result<(), String> {
+    for i in 0..zip.len() {
+        let mut file = zip.by_index(i).map_err(|e| format!("Zip read: {e}"))?;
+        let raw_name = file.name().replace('\\', "/");
+        if raw_name.contains("..") || raw_name.starts_with('/') || raw_name.contains(':') {
+            continue;
+        }
+
+        let out_path = out_root.join(raw_name);
+        if file.is_dir() {
+            fs::create_dir_all(&out_path).map_err(|e| format!("Create dir failed: {e}"))?;
+            continue;
+        }
+
+        if let Some(parent) = out_path.parent() {
+            fs::create_dir_all(parent).map_err(|e| format!("Create parent dir failed: {e}"))?;
+        }
+
+        let mut out = fs::File::create(&out_path).map_err(|e| format!("Write file failed: {e}"))?;
+        std::io::copy(&mut file, &mut out).map_err(|e| format!("Extract file failed: {e}"))?;
+    }
+    Ok(())
+}
+
+fn find_preview_png_in_tree(root: &Path) -> Option<Vec<u8>> {
+    let mut stack = vec![root.to_path_buf()];
+    while let Some(dir) = stack.pop() {
+        let entries = fs::read_dir(&dir).ok()?;
+        for entry in entries.flatten() {
+            let p = entry.path();
+            if p.is_dir() {
+                stack.push(p);
+                continue;
+            }
+            let name = p.file_name()?.to_string_lossy().to_lowercase();
+            if name == "arnis_world_map.png" {
+                if let Ok(bytes) = fs::read(&p) {
+                    if !bytes.is_empty() && is_useful_preview_png(&bytes) {
+                        return Some(bytes);
+                    }
+                }
+            }
+        }
+    }
+    None
+}
+
+/// Reject almost-empty white previews so import can rebuild a real map from region chunks.
+fn is_useful_preview_png(bytes: &[u8]) -> bool {
+    let img = match image::load_from_memory(bytes) {
+        Ok(v) => v.to_rgb8(),
+        Err(_) => return false,
+    };
+    let (w, h) = img.dimensions();
+    if w == 0 || h == 0 {
+        return false;
+    }
+
+    // Sample sparsely for speed on large maps.
+    let step_x = (w / 200).max(1);
+    let step_y = (h / 200).max(1);
+    let mut total = 0usize;
+    let mut non_white = 0usize;
+
+    let mut y = 0;
+    while y < h {
+        let mut x = 0;
+        while x < w {
+            let px = img.get_pixel(x, y).0;
+            total += 1;
+            // Not near-white background.
+            if !(px[0] > 248 && px[1] > 248 && px[2] > 248) {
+                non_white += 1;
+            }
+            x += step_x;
+        }
+        y += step_y;
+    }
+
+    // Require at least ~0.4% non-white pixels.
+    (non_white as f64) / (total as f64) > 0.004
+}
+
+fn find_best_world_root_and_bounds(root: &Path) -> Option<(PathBuf, i32, i32, i32, i32)> {
+    let mut candidates: Vec<PathBuf> = Vec::new();
+    let mut stack = vec![root.to_path_buf()];
+    while let Some(dir) = stack.pop() {
+        let entries = fs::read_dir(&dir).ok()?;
+        for entry in entries.flatten() {
+            let p = entry.path();
+            if p.is_dir() {
+                if p.file_name().and_then(|n| n.to_str()) == Some("region") {
+                    if let Some(parent) = p.parent() {
+                        candidates.push(parent.to_path_buf());
+                    }
+                }
+                stack.push(p);
+            }
+        }
+    }
+
+    let mut best: Option<(PathBuf, i32, i32, i32, i32, usize)> = None;
+    for world_root in candidates {
+        if let Ok((min_x, max_x, min_z, max_z, count)) = detect_world_bounds_from_regions(&world_root) {
+            if count == 0 {
+                continue;
+            }
+            match &best {
+                Some((_p, _a, _b, _c, _d, best_count)) if *best_count >= count => {}
+                _ => best = Some((world_root, min_x, max_x, min_z, max_z, count)),
+            }
+        }
+    }
+
+    best.map(|(p, min_x, max_x, min_z, max_z, _count)| (p, min_x, max_x, min_z, max_z))
+}
+
+fn detect_world_bounds_from_regions(world_root: &Path) -> Result<(i32, i32, i32, i32, usize), String> {
+    let region_dir = world_root.join("region");
+    if !region_dir.is_dir() {
+        return Err("Missing region folder".to_string());
+    }
+
+    let mut min_chunk_x = i32::MAX;
+    let mut max_chunk_x = i32::MIN;
+    let mut min_chunk_z = i32::MAX;
+    let mut max_chunk_z = i32::MIN;
+    let mut found_any = false;
+    let mut chunk_count: usize = 0;
+
+    let entries = fs::read_dir(&region_dir).map_err(|e| format!("Read region dir failed: {e}"))?;
+    for entry in entries.flatten() {
+        let p = entry.path();
+        if p.extension().and_then(|x| x.to_str()) != Some("mca") {
+            continue;
+        }
+        let name = match p.file_name().and_then(|n| n.to_str()) {
+            Some(n) => n,
+            None => continue,
+        };
+        let parts: Vec<&str> = name.split('.').collect();
+        if parts.len() != 4 || parts[0] != "r" || parts[3] != "mca" {
+            continue;
+        }
+        let rx = match parts[1].parse::<i32>() {
+            Ok(v) => v,
+            Err(_) => continue,
+        };
+        let rz = match parts[2].parse::<i32>() {
+            Ok(v) => v,
+            Err(_) => continue,
+        };
+
+        let f = match fs::File::open(&p) {
+            Ok(v) => v,
+            Err(_) => continue,
+        };
+        let mut region = match fastanvil::Region::from_stream(f) {
+            Ok(v) => v,
+            Err(_) => continue,
+        };
+
+        for lx in 0..32usize {
+            for lz in 0..32usize {
+                match region.read_chunk(lx, lz) {
+                    Ok(Some(_)) => {
+                        let cx = rx * 32 + lx as i32;
+                        let cz = rz * 32 + lz as i32;
+                        min_chunk_x = min_chunk_x.min(cx);
+                        max_chunk_x = max_chunk_x.max(cx);
+                        min_chunk_z = min_chunk_z.min(cz);
+                        max_chunk_z = max_chunk_z.max(cz);
+                        found_any = true;
+                        chunk_count += 1;
+                    }
+                    _ => {}
+                }
+            }
+        }
+    }
+
+    if !found_any {
+        return Err("No chunks found in region files".to_string());
+    }
+
+    Ok((
+        min_chunk_x * 16,
+        max_chunk_x * 16 + 15,
+        min_chunk_z * 16,
+        max_chunk_z * 16 + 15,
+        chunk_count,
+    ))
 }
 
 /// Returns the default save path (auto-detected on first run).
@@ -624,6 +998,75 @@ fn gui_get_world_map_data(world_path: String) -> Result<Option<WorldMapData>, St
     }))
 }
 
+/// Fast read of cached 3D mesh (`arnis_preview_mesh.bin.gz`). Does **not** build — avoids blocking
+/// the world preview modal; use `gui_build_world_preview_mesh_gzip_base64` when the user opens 3D.
+#[tauri::command]
+fn gui_get_world_preview_mesh_gzip_base64(world_path: String) -> Result<Option<String>, String> {
+    let mesh_path = PathBuf::from(world_path.trim()).join("arnis_preview_mesh.bin.gz");
+    if !mesh_path.exists() {
+        return Ok(None);
+    }
+    let bytes = fs::read(&mesh_path).map_err(|e| format!("Failed to read 3D preview: {e}"))?;
+    if bytes.is_empty() {
+        return Ok(None);
+    }
+    Ok(Some(base64::Engine::encode(
+        &base64::engine::general_purpose::STANDARD,
+        &bytes,
+    )))
+}
+
+/// Builds the 3D preview mesh from `metadata.json` + region files (can take a while). Only call from
+/// the 3D tab, not when opening the post-generation preview dialog.
+#[tauri::command]
+async fn gui_build_world_preview_mesh_gzip_base64(world_path: String) -> Result<Option<String>, String> {
+    let world = PathBuf::from(world_path.trim());
+    let mesh_path = world.join("arnis_preview_mesh.bin.gz");
+
+    let meta_path = world.join("metadata.json");
+    if !meta_path.is_file() {
+        return Ok(None);
+    }
+
+    let meta_str = fs::read_to_string(&meta_path)
+        .map_err(|e| format!("Failed to read metadata for 3D preview: {e}"))?;
+    let v: serde_json::Value =
+        serde_json::from_str(&meta_str).map_err(|e| format!("Invalid metadata.json: {e}"))?;
+
+    let min_x = v["minMcX"]
+        .as_i64()
+        .ok_or("metadata missing minMcX")? as i32;
+    let max_x = v["maxMcX"]
+        .as_i64()
+        .ok_or("metadata missing maxMcX")? as i32;
+    let min_z = v["minMcZ"]
+        .as_i64()
+        .ok_or("metadata missing minMcZ")? as i32;
+    let max_z = v["maxMcZ"]
+        .as_i64()
+        .ok_or("metadata missing maxMcZ")? as i32;
+
+    let world_clone = world.clone();
+    let mesh_path_clone = mesh_path.clone();
+
+    let mesh_bytes = tokio::task::spawn_blocking(move || {
+        let mesh = preview_mesh::generate_preview_mesh_gzip(&world_clone, min_x, max_x, min_z, max_z)?;
+        fs::write(&mesh_path_clone, &mesh)
+            .map_err(|e| format!("Failed to save 3D preview cache: {e}"))?;
+        Ok::<Vec<u8>, String>(mesh)
+    })
+    .await
+    .map_err(|e| format!("3D preview task: {e}"))??;
+
+    if mesh_bytes.is_empty() {
+        return Ok(None);
+    }
+    Ok(Some(base64::Engine::encode(
+        &base64::engine::general_purpose::STANDARD,
+        &mesh_bytes,
+    )))
+}
+
 /// Data structure for world map overlay
 #[derive(serde::Serialize)]
 struct WorldMapData {
@@ -703,7 +1146,7 @@ fn gui_start_generation(
     interior_enabled: bool,
     roof_enabled: bool,
     fillground_enabled: bool,
-    land_cover_enabled: bool, // renamed from city_boundaries_enabled
+    city_boundaries_enabled: bool,
     is_new_world: bool,
     spawn_point: Option<(f64, f64)>,
     telemetry_consent: bool,
@@ -779,8 +1222,9 @@ fn gui_start_generation(
             let check_path = if world_format == WorldFormat::JavaAnvil {
                 world_path.clone()
             } else {
-                // For Bedrock, check current directory where .mcworld will be created
-                std::env::current_dir().unwrap_or_else(|_| PathBuf::from("."))
+                // Bedrock output goes to Desktop (or home / "." fallback) — must match
+                // `build_bedrock_output`, not `current_dir()` (often install / shortcut folder).
+                crate::world_utils::get_bedrock_output_directory()
             };
             match fs2::available_space(&check_path) {
                 Ok(available) if available < MIN_DISK_SPACE_BYTES => {
@@ -895,7 +1339,7 @@ fn gui_start_generation(
                 interior: interior_enabled,
                 roof: roof_enabled,
                 fillground: fillground_enabled,
-                land_cover: land_cover_enabled,
+                city_boundaries: city_boundaries_enabled,
                 debug: false,
                 timeout: Some(std::time::Duration::from_secs(40)),
                 spawn_lat: None,

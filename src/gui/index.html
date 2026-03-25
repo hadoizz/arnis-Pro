@@ -6,6 +6,15 @@
   <link rel="stylesheet" href="./css/styles.css" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>Arnis</title>
+  <!-- OrbitControls imports bare "three"; browsers require an import map for bare specifiers. -->
+  <script type="importmap">
+  {
+    "imports": {
+      "three": "https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.module.js",
+      "three/addons/": "https://cdn.jsdelivr.net/npm/three@0.160.0/examples/jsm/"
+    }
+  }
+  </script>
   <script type="module" src="./js/main.js" defer></script>
   <script type="module" src="./js/license.js" defer></script>
   <script type="module" src="./js/language-selector.js" defer></script>
@@ -40,6 +49,16 @@
                   </span>
                 </button>
               </div>
+              <div class="tooltip" style="width: 100%; margin-top: 8px;">
+                <button type="button" id="import-world-btn" class="choose-world-btn">
+                  <span id="import_world">Import Map Zip</span>
+                  <br>
+                  <span id="import-world-status" style="font-size: 0.8em; color: #9ecbff; display: block; margin-top: 4px;">
+                    Preview from existing world zip
+                  </span>
+                </button>
+                <input type="file" id="import-world-file" accept=".zip,.mcworld,application/zip" style="display:none;" />
+              </div>
               <!-- World Format Toggle -->
               <div class="format-toggle-container">
                 <button type="button" id="format-java" class="format-toggle-btn format-active" onclick="setWorldFormat('java')">
@@ -52,10 +71,15 @@
             </div>
             
             <div class="button-container">
-              <button type="button" id="start-button" class="start-button" onclick="startGeneration()" data-localize="start_generation">Start Generation</button>
-              <button type="button" class="settings-button" onclick="openSettings()" aria-label="Settings">
-                  <svg xmlns="http://www.w3.org/2000/svg" width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12.22 2h-.44a2 2 0 0 0-2 2v.18a2 2 0 0 1-1 1.73l-.43.25a2 2 0 0 1-2 0l-.15-.08a2 2 0 0 0-2.73.73l-.22.38a2 2 0 0 0 .73 2.73l.15.1a2 2 0 0 1 1 1.72v.51a2 2 0 0 1-1 1.74l-.15.09a2 2 0 0 0-.73 2.73l.22.38a2 2 0 0 0 2.73.73l.15-.08a2 2 0 0 1 2 0l.43.25a2 2 0 0 1 1 1.73V20a2 2 0 0 0 2 2h.44a2 2 0 0 0 2-2v-.18a2 2 0 0 1 1-1.73l.43-.25a2 2 0 0 1 2 0l.15.08a2 2 0 0 0 2.73-.73l.22-.39a2 2 0 0 0-.73-2.73l-.15-.08a2 2 0 0 1-1-1.74v-.5a2 2 0 0 1 1-1.74l.15-.09a2 2 0 0 0 .73-2.73l-.22-.38a2 2 0 0 0-2.73-.73l-.15.08a2 2 0 0 1-2 0l-.43-.25a2 2 0 0 1-1-1.73V4a2 2 0 0 0-2-2z"></path><circle cx="12" cy="12" r="3"></circle></svg>
-              </button>
+              <div class="button-container-stack">
+                <div class="button-container-main-actions">
+                  <button type="button" id="preview-button" class="start-button" onclick="openWorldPreview()" disabled style="opacity: 0.6;" data-localize="world_preview_open_btn">Preview</button>
+                  <button type="button" id="start-button" class="start-button" onclick="startGeneration()" data-localize="start_generation">Start Generation</button>
+                </div>
+                <button type="button" class="settings-button settings-button-below" onclick="openSettings()" aria-label="Settings">
+                    <svg xmlns="http://www.w3.org/2000/svg" width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12.22 2h-.44a2 2 0 0 0-2 2v.18a2 2 0 0 1-1 1.73l-.43.25a2 2 0 0 1-2 0l-.15-.08a2 2 0 0 0-2.73.73l-.22.38a2 2 0 0 0 .73 2.73l.15.1a2 2 0 0 1 1 1.72v.51a2 2 0 0 1-1 1.74l-.15.09a2 2 0 0 0-.73 2.73l.22.38a2 2 0 0 0 2.73.73l.15-.08a2 2 0 0 1 2 0l.43.25a2 2 0 0 1 1 1.73V20a2 2 0 0 0 2 2h.44a2 2 0 0 0 2-2v-.18a2 2 0 0 1 1-1.73l.43-.25a2 2 0 0 1 2 0l.15.08a2 2 0 0 0 2.73-.73l.22-.39a2 2 0 0 0-.73-2.73l-.15-.08a2 2 0 0 1-1-1.74v-.5a2 2 0 0 1 1-1.74l.15-.09a2 2 0 0 0 .73-2.73l-.22-.38a2 2 0 0 0-2.73-.73l-.15.08a2 2 0 0 1-2 0l-.43-.25a2 2 0 0 1-1-1.73V4a2 2 0 0 0-2-2z"></path><circle cx="12" cy="12" r="3"></circle></svg>
+                </button>
+              </div>
             </div>
             <span id="bbox-selection-info" class="bbox-selection-text" data-localize="select_area_prompt">Select an area on the map using the tools.</span>
           </div>
@@ -109,7 +133,7 @@
         <div class="settings-row">
           <label for="interior-toggle">
             <span data-localize="interior">Interior Generation</span>
-            <span class="tooltip-icon" data-tooltip="Generate interior details inside buildings (experimental)">?</span>
+            <span class="tooltip-icon" data-tooltip="Generate interior details inside buildings">?</span>
           </label>
           <div class="settings-control">
             <input type="checkbox" id="interior-toggle" name="interior-toggle">
@@ -127,14 +151,14 @@
           </div>
         </div>
 
-        <!-- Land Cover Toggle Button -->
+        <!-- City Ground Toggle Button -->
         <div class="settings-row">
-          <label for="land-cover-toggle">
-            <span data-localize="land_cover">Land Cover</span>
-            <span class="tooltip-icon" data-tooltip="Fetch satellite land cover data to classify terrain type. Requires terrain to be enabled.">?</span>
+          <label for="city-boundaries-toggle">
+            <span data-localize="city_boundaries">City Ground</span>
+            <span class="tooltip-icon" data-tooltip="Detect urban areas and place smooth stone ground where cities are located.">?</span>
           </label>
           <div class="settings-control">
-            <input type="checkbox" id="land-cover-toggle" name="land-cover-toggle" checked>
+            <input type="checkbox" id="city-boundaries-toggle" name="city-boundaries-toggle" checked>
           </div>
         </div>
 
@@ -263,6 +287,42 @@
       </div>
     </div>
 
+    <!-- World preview (Java): 2D map + optional 3D mesh -->
+    <div id="world-preview-modal" class="modal" style="display: none;" role="dialog" aria-modal="true" aria-labelledby="world-preview-title">
+      <div class="modal-content world-preview-modal-content">
+        <span class="close-button" id="world-preview-modal-close" onclick="closeWorldPreviewModal()" aria-label="Close">&times;</span>
+        <h2 id="world-preview-title" data-localize="world_preview_title">World preview</h2>
+        <div class="world-preview-tabs" role="tablist">
+          <button type="button" id="world-preview-tab-2d" class="world-preview-tab world-preview-tab-active" role="tab" aria-selected="true" data-localize="world_preview_tab_2d">2D map</button>
+          <button type="button" id="world-preview-tab-3d" class="world-preview-tab" role="tab" aria-selected="false" data-localize="world_preview_tab_3d">3D</button>
+        </div>
+        <p id="world-preview-hint" class="world-preview-hint" data-localize="world_preview_hint">2D is exact top-down. 3D uses the same image on a tilted plane — drag to rotate.</p>
+        <div id="world-preview-pane-2d" class="world-preview-pane">
+          <div class="world-preview-2d-zoombar" role="toolbar" aria-label="Map zoom">
+            <button type="button" id="world-preview-zoom-out" class="world-preview-zoom-btn" title="Zoom out">−</button>
+            <span id="world-preview-zoom-label" class="world-preview-zoom-label">100%</span>
+            <button type="button" id="world-preview-zoom-in" class="world-preview-zoom-btn" title="Zoom in">+</button>
+            <button type="button" id="world-preview-zoom-reset" class="world-preview-zoom-btn world-preview-zoom-reset" title="Reset zoom">Reset</button>
+          </div>
+          <div class="world-preview-img-wrap" id="world-preview-img-wrap">
+            <img id="world-preview-modal-img" alt="" />
+          </div>
+        </div>
+        <div id="world-preview-pane-3d" class="world-preview-pane" style="display: none;">
+          <p id="world-preview-3d-status" class="world-preview-3d-status" style="display: none;"></p>
+          <div id="world-preview-3d-progress-wrap" class="world-preview-3d-progress-wrap" style="display:none;">
+            <div class="world-preview-3d-progress-bar">
+              <div id="world-preview-3d-progress-fill" class="world-preview-3d-progress-fill"></div>
+            </div>
+          </div>
+          <canvas id="world-preview-3d-canvas" width="640" height="360"></canvas>
+        </div>
+        <div class="modal-actions world-preview-actions">
+          <button type="button" id="world-preview-close-btn" class="btn-primary" data-localize="world_preview_close" onclick="closeWorldPreviewModal()">Close</button>
+        </div>
+      </div>
+    </div>
+
     <!-- License Modal -->
     <div id="license-modal" class="modal" style="display: none;">
       <div class="modal-content">
@@ -276,9 +336,27 @@
 
     <!-- Footer -->
     <footer class="footer">
-      <a href="https://github.com/louis-e/arnis" target="_blank" class="footer-link" data-localize="footer_text">
-        © {year} Arnis v{version} by louis-e
-      </a>
+      <div class="footer-row">
+        <span class="footer-credits" data-localize="footer_text">
+          © {year} Arnis v{version} by louis-e · Improved by Hadoiz
+        </span>
+        <a
+          href="https://github.com/hadoizz/arnis-Pro"
+          target="_blank"
+          rel="noopener noreferrer"
+          class="footer-github-link"
+          aria-label="Arnis Pro on GitHub"
+        >
+          <svg class="footer-github-icon" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 98 96" aria-hidden="true">
+            <path
+              fill="currentColor"
+              fill-rule="evenodd"
+              clip-rule="evenodd"
+              d="M48.854 0C21.839 0 0 22 0 49.217c0 21.756 13.993 40.172 33.405 46.69 2.427.49 3.316-1.059 3.316-2.362 0-1.141-.08-5.052-.08-9.127-13.59 2.934-16.42-5.867-16.42-5.867-2.184-5.704-5.42-7.17-5.42-7.17-4.448-3.015.324-3.015.324-3.015 4.934.326 7.523 5.052 7.523 5.052 4.367 7.496 11.404 5.378 14.235 4.074.404-3.178 1.699-5.378 3.074-6.6-10.839-1.141-22.243-5.378-22.243-24.283 0-5.378 1.94-9.778 5.014-13.2-.485-1.222-2.184-6.275.486-13.038 0 0 4.125-1.304 13.426 5.052a46.97 46.97 0 0 1 12.214-1.63c4.125 0 8.33.57 12.214 1.63 9.302-6.356 13.427-5.052 13.427-5.052 2.67 6.763.97 11.816.485 13.038 3.155 3.422 5.015 7.822 5.015 13.2 0 18.905-11.404 23.06-22.324 24.283 1.78 1.548 3.316 4.481 3.316 9.126 0 6.6-.08 11.897-.08 13.526 0 1.304.89 2.853 3.316 2.364 19.412-6.52 33.405-24.935 33.405-46.691C97.707 22 75.788 0 48.854 0z"
+            />
+          </svg>
+        </a>
+      </div>
     </footer>
   </main>
 </body>

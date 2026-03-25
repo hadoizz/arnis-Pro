@@ -939,7 +939,15 @@ $(document).ready(function () {
 
         // Handle world preview data ready (after generation completes)
         if (event.data && event.data.type === 'worldPreviewReady') {
-            enableWorldPreview(event.data.data);
+            var data = event.data.data;
+            enableWorldPreview(data);
+
+            // Zoom the map so the preview area is visible
+            var bounds = L.latLngBounds(
+                [data.min_lat, data.min_lon],
+                [data.max_lat, data.max_lon]
+            );
+            map.fitBounds(bounds, { padding: [50, 50], maxZoom: 18 });
 
             // Auto-enable the overlay when generation completes
             if (!worldOverlayEnabled) {
